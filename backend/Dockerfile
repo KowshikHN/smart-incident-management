@@ -25,7 +25,7 @@ RUN mkdir -p /app/uploads/issues && chown -R app:app /app
 COPY --from=build /build/target/*.jar /app/app.jar
 
 USER app
-EXPOSE 8080
+EXPOSE 8088
 
 ENV JAVA_OPTS="-XX:MaxRAMPercentage=70"
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar"]
