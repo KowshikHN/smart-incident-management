@@ -1,0 +1,140 @@
+name: smart-ims
+
+services:
+  # ---------------------------------------------------------------- database
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-smart_ims}
+      POSTGRES_USER: ${POSTGRES_USER:-smartims}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ----------------------------------------------------------------- backend
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Database (the app has no defaults for these three)
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-smart_ims}
+      DB_USERNAME: ${POSTGRES_USER:-smartims}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+
+      # Auth. The app falls back to a weak hardcoded secret if this is missing,
+      # so it is required here. Must be at least 32 characters.
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env (min 32 chars)}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-3600000}
+
+      # Mail (registration OTP, password reset, notifications)
+      SPRING_MAIL_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SPRING_MAIL_PORT: ${SMTP_PORT:-587}
+      GMAIL_USERNAME: ${SMTP_USERNAME:-}
+      GMAIL_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-${SMTP_USERNAME:-no-reply@smartims.local}}
+
+      # Link used in emails
+      FRONTEND_LOGIN_URL: ${PUBLIC_URL:?Set PUBLIC_URL in .env}/login
+
+      # Production-friendly overrides of the dev defaults in application.yml
+      SPRING_JPA_SHOW_SQL: "false"
+      LOGGING_LEVEL_COM_SMARTIMS: INFO
+      # A failing SMTP login would otherwise turn /actuator/health DOWN
+      MANAGEMENT_HEALTH_MAIL_ENABLED: "false"
+
+      # Attachment uploads (Spring's default limit is only 1MB)
+      SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE: 10MB
+      SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE: 12MB
+
+      JAVA_OPTS: -XX:MaxRAMPercentage=70 -Duser.timezone=${APP_TIMEZONE:-UTC}
+    volumes:
+      - uploads:/app/uploads
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - |-
+          wget -qO- http://127.0.0.1:8080/actuator/health | grep -Eq '"status" ?: ?"UP"'
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 90s
+
+  # ---------------------------------------------------------------- frontend
+  # nginx: serves the React build and proxies /api to the backend.
+  # This is the only service open to the internet.
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${PUBLIC_URL:?Set PUBLIC_URL in .env}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${HTTP_PORT:-80}:80"
+
+  # -------------------------------------------------------------- monitoring
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATA_SOURCE_URI: postgres:5432/${POSTGRES_DB:-smart_ims}?sslmode=disable
+      DATA_SOURCE_USER: ${POSTGRES_USER:-smartims}
+      DATA_SOURCE_PASS: ${POSTGRES_PASSWORD}
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      # Bound to localhost on purpose. Reach it with an SSH tunnel, or set
+      # PROMETHEUS_BIND=0.0.0.0 in .env and firewall the port yourself.
+      - "${PROMETHEUS_BIND:-127.0.0.1}:9090:9090"
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/smartims-overview.json
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      # Same idea as Prometheus: localhost only by default.
+      - "${GRAFANA_BIND:-127.0.0.1}:3000:3000"
+
+volumes:
+  pgdata:
+  uploads:
+  prometheus-data:
+  grafana-data:
