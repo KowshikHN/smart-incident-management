@@ -1,0 +1,24 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Spring Boot Actuator + Micrometer. Scraped over the internal Docker network;
+  # nginx deliberately does not expose /actuator publicly.
+  - job_name: smartims-backend
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["backend:8080"]
+        labels:
+          application: smart-incident-management
+
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]

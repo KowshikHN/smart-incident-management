@@ -1,0 +1,68 @@
+groups:
+  - name: smartims
+    rules:
+      - alert: BackendDown
+        expr: up{job="smartims-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Smart IMS backend is down"
+          description: "Prometheus has not been able to scrape the backend for 1 minute."
+
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "The postgres exporter cannot reach the database."
+
+      - alert: HighHttp5xxRate
+        expr: |
+          sum(rate(http_server_requests_seconds_count{job="smartims-backend",status=~"5.."}[5m]))
+            /
+          clamp_min(sum(rate(http_server_requests_seconds_count{job="smartims-backend"}[5m])), 0.001)
+            > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 5% of API responses are 5xx"
+          description: "Server error ratio has been above 5% for 5 minutes."
+
+      - alert: HighAverageLatency
+        expr: |
+          sum(rate(http_server_requests_seconds_sum{job="smartims-backend"}[5m]))
+            /
+          clamp_min(sum(rate(http_server_requests_seconds_count{job="smartims-backend"}[5m])), 0.001)
+            > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Average API latency above 1 second"
+          description: "Average request duration has been above 1s for 10 minutes."
+
+      - alert: HighHeapUsage
+        expr: |
+          sum(jvm_memory_used_bytes{job="smartims-backend",area="heap"})
+            /
+          sum(jvm_memory_max_bytes{job="smartims-backend",area="heap"})
+            > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "JVM heap above 90%"
+          description: "Heap usage has been above 90% for 10 minutes. Consider more memory."
+
+      - alert: DbConnectionPoolWaiting
+        expr: hikaricp_connections_pending{job="smartims-backend"} > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Requests are waiting for a database connection"
+          description: "The HikariCP pool has had pending connection requests for 2 minutes."
