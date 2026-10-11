@@ -28,7 +28,11 @@ pipeline {
       }
     }
     stage('Deploy') {
-      steps { bat 'docker compose --env-file "%ENV_FILE%" up -d --build' }
+      steps {
+        withEnv(['DOCKER_CONFIG=C:\\Users\\Admin\\.docker']) {
+          bat 'docker compose --env-file "%ENV_FILE%" up -d --build'
+        }
+      }
     }
   }
 }
