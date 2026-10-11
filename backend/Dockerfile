@@ -8,7 +8,7 @@ COPY pom.xml .
 COPY src ./src
 
 # BuildKit cache keeps ~/.m2 between builds so dependencies are not re-downloaded.
-RUN --mount=type=cache,target=/root/.m2 \
+RUN \
     mvn -B -DskipTests package
 
 # ---------- Stage 2: small runtime image ----------
